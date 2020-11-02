@@ -424,4 +424,32 @@ declare module 'core/store/models' {
   export type RunStatusCollection = RunStatus[]
 
   //#endregion  bulk.go
+  //#region ocrkey/key_bundle.go
+
+  /**
+   * OcrKey represents the bundle of keys needed for OCR
+   */
+
+  export interface OcrKey {
+    configPublicKey: string
+    createdAt: time.Time
+    offChainPublicKey: string
+    onChainSigningAddress: common.Address
+    updatedAt: time.Time
+  }
+  //#endregion ocrkey/key_bundle.go
+  //#region p2pKey/p2p_key.go
+
+  /**
+   * P2P represents the bundle of keys needed for P2P
+   */
+
+  export interface P2PKey {
+    peerId: string
+    publicKey: string
+    createdAt: time.Time
+    updatedAt: time.Time
+    deletedAt: time.Time
+  }
+  //#endregion p2pKey/p2p_key.go
 }

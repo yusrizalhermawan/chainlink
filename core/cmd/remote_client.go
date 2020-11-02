@@ -11,16 +11,17 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/smartcontractkit/chainlink/core/assets"
-	"github.com/smartcontractkit/chainlink/core/store/models"
-	"github.com/smartcontractkit/chainlink/core/store/presenters"
-	"github.com/smartcontractkit/chainlink/core/utils"
-	"github.com/smartcontractkit/chainlink/core/web"
-
 	"github.com/BurntSushi/toml"
 	"github.com/manyminds/api2go/jsonapi"
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/pkg/errors"
+	"github.com/smartcontractkit/chainlink/core/assets"
+	"github.com/smartcontractkit/chainlink/core/store/models"
+	"github.com/smartcontractkit/chainlink/core/store/models/ocrkey"
+	"github.com/smartcontractkit/chainlink/core/store/models/p2pkey"
+	"github.com/smartcontractkit/chainlink/core/store/presenters"
+	"github.com/smartcontractkit/chainlink/core/utils"
+	"github.com/smartcontractkit/chainlink/core/web"
 	"github.com/tidwall/gjson"
 	clipkg "github.com/urfave/cli"
 	"go.uber.org/multierr"
@@ -28,9 +29,9 @@ import (
 
 var errUnauthorized = errors.New("401 Unauthorized")
 
-// DisplayAccountBalance renders a table containing the active account address
+// ListETHKeys renders a table containing the active account address
 // with it's ETH & LINK balance
-func (cli *Client) DisplayAccountBalance(c *clipkg.Context) (err error) {
+func (cli *Client) ListETHKeys(c *clipkg.Context) (err error) {
 	resp, err := cli.HTTP.Get("/v2/user/balances")
 	if err != nil {
 		return cli.errorOut(err)
@@ -42,7 +43,7 @@ func (cli *Client) DisplayAccountBalance(c *clipkg.Context) (err error) {
 	}()
 
 	var links jsonapi.Links
-	balances := []presenters.AccountBalance{}
+	balances := []presenters.ETHKey{}
 	if err = cli.deserializeAPIResponse(resp, &balances, &links); err != nil {
 		return err
 	}
@@ -224,7 +225,7 @@ func (cli *Client) CreateOCRJobSpec(c *clipkg.Context) (err error) {
 		return cli.errorOut(err)
 	}
 
-	resp, err := cli.HTTP.Post("/v2/specs_v2", buf)
+	resp, err := cli.HTTP.Post("/v2/ocr/specs", buf)
 	if err != nil {
 		return cli.errorOut(err)
 	}
@@ -277,7 +278,7 @@ func (cli *Client) DeleteJobV2(c *clipkg.Context) error {
 	if !c.Args().Present() {
 		return cli.errorOut(errors.New("Must pass the job id to be archived"))
 	}
-	resp, err := cli.HTTP.Delete("/v2/specs_v2/" + c.Args().First())
+	resp, err := cli.HTTP.Delete("/v2/ocr/specs/" + c.Args().First())
 	if err != nil {
 		return cli.errorOut(err)
 	}
@@ -757,4 +758,145 @@ func (cli *Client) CancelJobRun(c *clipkg.Context) error {
 		return cli.errorOut(errors.Wrap(err, "cli.parseResponse"))
 	}
 	return nil
+}
+
+func (cli *Client) CreateP2PKey(c *clipkg.Context) (err error) {
+	resp, err := cli.HTTP.Post("/v2/p2p_keys", nil)
+	if err != nil {
+		return cli.errorOut(err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = multierr.Append(err, cerr)
+		}
+	}()
+
+	if resp.StatusCode == 200 {
+		fmt.Printf("Created P2P keypair.\n\n")
+	}
+	var key p2pkey.EncryptedP2PKey
+	return cli.renderAPIResponse(resp, &key)
+}
+
+func (cli *Client) ListP2PKeys(c *clipkg.Context) (err error) {
+	resp, err := cli.HTTP.Get("/v2/p2p_keys", nil)
+	if err != nil {
+		return cli.errorOut(err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = multierr.Append(err, cerr)
+		}
+	}()
+
+	var keys []p2pkey.EncryptedP2PKey
+	return cli.renderAPIResponse(resp, &keys)
+}
+
+func (cli *Client) DeleteP2PKey(c *clipkg.Context) (err error) {
+	if !c.Args().Present() {
+		return cli.errorOut(errors.New("Must pass the key ID to be deleted"))
+	}
+	id, err := strconv.ParseUint(c.Args().Get(0), 10, 32)
+	if err != nil {
+		return cli.errorOut(err)
+	}
+
+	if !confirmAction(c) {
+		return nil
+	}
+
+	var queryStr string
+	if c.Bool("hard") {
+		queryStr = "?hard=true"
+	}
+
+	resp, err := cli.HTTP.Delete(fmt.Sprintf("/v2/p2p_keys/%d%s", id, queryStr))
+	if err != nil {
+		return cli.errorOut(err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = multierr.Append(err, cerr)
+		}
+	}()
+
+	if resp.StatusCode == 200 {
+		fmt.Printf("P2P key deleted.\n\n")
+	}
+	var key p2pkey.EncryptedP2PKey
+	return cli.renderAPIResponse(resp, &key)
+}
+
+// CreateOCRKeyBundle creates a key and inserts it into encrypted_ocr_key_bundles,
+// protected by the password in the password file
+func (cli *Client) CreateOCRKeyBundle(c *clipkg.Context) error {
+	resp, err := cli.HTTP.Post("/v2/off_chain_reporting_keys", nil)
+	if err != nil {
+		return cli.errorOut(err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = multierr.Append(err, cerr)
+		}
+	}()
+
+	if resp.StatusCode == 200 {
+		fmt.Printf("Created OCR key bundle.\n\n")
+	}
+	var key ocrkey.EncryptedKeyBundle
+	return cli.renderAPIResponse(resp, &key)
+}
+
+// ListOCRKeyBundles lists the available OCR Key Bundles
+func (cli *Client) ListOCRKeyBundles(c *clipkg.Context) error {
+	resp, err := cli.HTTP.Get("/v2/off_chain_reporting_keys", nil)
+	if err != nil {
+		return cli.errorOut(err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = multierr.Append(err, cerr)
+		}
+	}()
+
+	var keys []ocrkey.EncryptedKeyBundle
+	return cli.renderAPIResponse(resp, &keys)
+}
+
+// DeleteOCRKeyBundle creates a key and inserts it into encrypted_ocr_keys,
+// protected by the password in the password file
+func (cli *Client) DeleteOCRKeyBundle(c *clipkg.Context) error {
+	if !c.Args().Present() {
+		return cli.errorOut(errors.New("Must pass the key ID to be deleted"))
+	}
+	id, err := models.Sha256HashFromHex(c.Args().Get(0))
+	if err != nil {
+		return cli.errorOut(err)
+	}
+
+	if !confirmAction(c) {
+		return nil
+	}
+
+	var queryStr string
+	if c.Bool("hard") {
+		queryStr = "?hard=true"
+	}
+
+	resp, err := cli.HTTP.Delete(fmt.Sprintf("/v2/off_chain_reporting_keys/%s%s", id, queryStr))
+	if err != nil {
+		return cli.errorOut(err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			err = multierr.Append(err, cerr)
+		}
+	}()
+
+	if resp.StatusCode == 200 {
+		fmt.Printf("OCR key bundle deleted.\n\n")
+	}
+	var key ocrkey.EncryptedKeyBundle
+	return cli.renderAPIResponse(resp, &key)
 }

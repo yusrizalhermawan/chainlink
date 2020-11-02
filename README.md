@@ -46,7 +46,7 @@ regarding Chainlink social accounts, news, and networking.
    - Example Path for macOS `export PATH=$GOPATH/bin:$PATH` & `export GOPATH=/Users/$USER/go`
 2. Install [NodeJS 12.18](https://nodejs.org/en/download/package-manager/) & [Yarn](https://yarnpkg.com/lang/en/docs/install/)
    - It might be easier long term to use [nvm](https://nodejs.org/en/download/package-manager/#nvm) to switch between node versions for different projects: `nvm install 12.18 && nvm use 12.18`
-3. Install [Postgres (>= 9.6)](https://wiki.postgresql.org/wiki/Detailed_installation_guides).
+3. Install [Postgres (>= 11.x)](https://wiki.postgresql.org/wiki/Detailed_installation_guides).
    - You should [configure Postgres](https://www.postgresql.org/docs/12/ssl-tcp.html) to use SSL connection
 4. Download Chainlink: `git clone https://github.com/smartcontractkit/chainlink && cd chainlink`
 5. Build and install Chainlink: `make install`
@@ -104,7 +104,6 @@ projects.
 - [@chainlink/contracts](./evm-contracts) - smart contracts
 - [@chainlink/test-helpers](./evm-test-helpers) - smart contract-related resources
 - [integration/forks](./integration/forks) - integration test for [ommers](https://ethereum.stackexchange.com/a/46/19503) and [re-orgs](https://en.bitcoin.it/wiki/Chain_Reorganization)
-- [sgx](./core/sgx) - an optional and experimental Chainlink module to do processing within an [SGX](https://software.intel.com/en-us/sgx) enclave
 - [tools](./tools) - Chainlink tools
 
 ## External Adapters

@@ -17,6 +17,7 @@ import (
 	"github.com/smartcontractkit/chainlink/core/services/job"
 	"github.com/smartcontractkit/chainlink/core/services/offchainreporting"
 	"github.com/smartcontractkit/chainlink/core/services/pipeline"
+	"github.com/smartcontractkit/chainlink/core/services/postgres"
 	"github.com/smartcontractkit/chainlink/core/services/synchronization"
 	"github.com/smartcontractkit/chainlink/core/services/telemetry"
 	strpkg "github.com/smartcontractkit/chainlink/core/store"
@@ -72,6 +73,7 @@ type ChainlinkApplication struct {
 	GasUpdater               services.GasUpdater
 	EthBroadcaster           bulletprooftxmanager.EthBroadcaster
 	LogBroadcaster           eth.LogBroadcaster
+	EventBroadcaster         postgres.EventBroadcaster
 	jobSpawner               job.Spawner
 	pipelineRunner           pipeline.Runner
 	FluxMonitor              fluxmonitor.Service
@@ -90,9 +92,9 @@ type ChainlinkApplication struct {
 // present at the configured root directory (default: ~/.chainlink),
 // the logger at the same directory and returns the Application to
 // be used by the node.
-func NewApplication(config *orm.Config, ethClient eth.Client, onConnectCallbacks ...func(Application)) Application {
+func NewApplication(config *orm.Config, ethClient eth.Client, advisoryLocker postgres.AdvisoryLocker, onConnectCallbacks ...func(Application)) Application {
 	shutdownSignal := gracefulpanic.NewSignal()
-	store := strpkg.NewStore(config, ethClient, shutdownSignal)
+	store := strpkg.NewStore(config, ethClient, advisoryLocker, shutdownSignal)
 	config.SetRuntimeStore(store.ORM)
 
 	explorerClient := synchronization.ExplorerClient(&synchronization.NoopExplorerClient{})
@@ -111,15 +113,21 @@ func NewApplication(config *orm.Config, ethClient eth.Client, onConnectCallbacks
 	jobSubscriber := services.NewJobSubscriber(store, runManager)
 	gasUpdater := services.NewGasUpdater(store)
 	logBroadcaster := eth.NewLogBroadcaster(ethClient, store.ORM, store.Config.BlockBackfillDepth())
+	eventBroadcaster := postgres.NewEventBroadcaster(config.DatabaseURL(), config.DatabaseListenerMinReconnectInterval(), config.DatabaseListenerMaxReconnectDuration())
 	fluxMonitor := fluxmonitor.New(store, runManager, logBroadcaster)
-	ethBroadcaster := bulletprooftxmanager.NewEthBroadcaster(store, config)
+	ethBroadcaster := bulletprooftxmanager.NewEthBroadcaster(store, config, eventBroadcaster)
 	ethConfirmer := bulletprooftxmanager.NewEthConfirmer(store, config)
-	balanceMonitor := services.NewBalanceMonitor(store)
+	var balanceMonitor services.BalanceMonitor
+	if config.BalanceMonitorEnabled() {
+		balanceMonitor = services.NewBalanceMonitor(store)
+	} else {
+		balanceMonitor = &services.NullBalanceMonitor{}
+	}
 
 	var (
-		pipelineORM    = pipeline.NewORM(store.ORM.DB, store.Config)
+		pipelineORM    = pipeline.NewORM(store.ORM.DB, store.Config, eventBroadcaster)
 		pipelineRunner = pipeline.NewRunner(pipelineORM, store.Config)
-		jobORM         = job.NewORM(store.ORM.DB, store.Config, pipelineORM)
+		jobORM         = job.NewORM(store.ORM.DB, store.Config, pipelineORM, eventBroadcaster, advisoryLocker)
 		jobSpawner     = job.NewSpawner(jobORM, store.Config)
 	)
 
@@ -136,6 +144,7 @@ func NewApplication(config *orm.Config, ethClient eth.Client, onConnectCallbacks
 		GasUpdater:               gasUpdater,
 		EthBroadcaster:           ethBroadcaster,
 		LogBroadcaster:           logBroadcaster,
+		EventBroadcaster:         eventBroadcaster,
 		jobSpawner:               jobSpawner,
 		pipelineRunner:           pipelineRunner,
 		FluxMonitor:              fluxMonitor,
@@ -199,9 +208,6 @@ func (app *ChainlinkApplication) Start() error {
 		return err
 	}
 
-	app.jobSpawner.Start()
-	app.pipelineRunner.Start()
-
 	subtasks := []func() error{
 		app.Store.Start,
 		app.explorerClient.Start,
@@ -209,6 +215,7 @@ func (app *ChainlinkApplication) Start() error {
 		app.RunQueue.Start,
 		app.RunManager.ResumeAllInProgress,
 		app.LogBroadcaster.Start,
+		app.EventBroadcaster.Start,
 		app.FluxMonitor.Start,
 		app.EthBroadcaster.Start,
 
@@ -226,6 +233,10 @@ func (app *ChainlinkApplication) Start() error {
 			return err
 		}
 	}
+
+	app.jobSpawner.Start()
+	app.pipelineRunner.Start()
+
 	return nil
 }
 
@@ -246,6 +257,7 @@ func (app *ChainlinkApplication) Stop() error {
 		logger.Info("Gracefully exiting...")
 
 		merr = multierr.Append(merr, app.LogBroadcaster.Stop())
+		merr = multierr.Append(merr, app.EventBroadcaster.Stop())
 		app.Scheduler.Stop()
 		merr = multierr.Append(merr, app.HeadTracker.Stop())
 		merr = multierr.Append(merr, app.balanceMonitor.Stop())

@@ -251,17 +251,6 @@ func RetryWithBackoff(ctx context.Context, fn func() (retry bool)) {
 	}
 }
 
-// MinBigs finds the minimum value of a list of big.Ints.
-func MinBigs(first *big.Int, bigs ...*big.Int) *big.Int {
-	min := first
-	for _, n := range bigs {
-		if min.Cmp(n) > 0 {
-			min = n
-		}
-	}
-	return min
-}
-
 // MaxBigs finds the maximum value of a list of big.Ints.
 func MaxBigs(first *big.Int, bigs ...*big.Int) *big.Int {
 	max := first
@@ -882,6 +871,30 @@ const (
 	StartStopOnce_Started
 	StartStopOnce_Stopped
 )
+
+func (once *StartStopOnce) StartOnce(name string, fn func() error) error {
+	once.Lock()
+	defer once.Unlock()
+
+	if once.state != StartStopOnce_Unstarted {
+		return errors.Errorf("%v has already started once", name)
+	}
+	once.state = StartStopOnce_Started
+
+	return fn()
+}
+
+func (once *StartStopOnce) StopOnce(name string, fn func() error) error {
+	once.Lock()
+	defer once.Unlock()
+
+	if once.state != StartStopOnce_Started {
+		return errors.Errorf("%v has already stopped once", name)
+	}
+	once.state = StartStopOnce_Stopped
+
+	return fn()
+}
 
 func (once *StartStopOnce) OkayToStart() (ok bool) {
 	once.Lock()
